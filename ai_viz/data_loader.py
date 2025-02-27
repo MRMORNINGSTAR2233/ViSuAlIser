@@ -11,9 +11,17 @@ def load_data(source):
     if isinstance(source, str) and os.path.isfile(source):
         ext = os.path.splitext(source)[1].lower()
         if ext == ".csv":
-            return pd.read_csv(source)
+            try:
+                return pd.read_csv(source, encoding="utf-8")
+            except UnicodeDecodeError:
+                print("UTF-8 decoding failed, trying 'latin1' encoding.")
+                return pd.read_csv(source, encoding="latin1")
         elif ext == ".tsv":
-            return pd.read_csv(source, sep="\t")
+            try:
+                return pd.read_csv(source, sep="\t", encoding="utf-8")
+            except UnicodeDecodeError:
+                print("UTF-8 decoding failed, trying 'latin1' encoding.")
+                return pd.read_csv(source, sep="\t", encoding="latin1")
         elif ext in [".xls", ".xlsx"]:
             return pd.read_excel(source)
         elif ext in [".png", ".jpg", ".jpeg", ".bmp", ".gif"]:

@@ -7,7 +7,7 @@ class OllamaInterface:
         self.model = model or OLLAMA_MODEL
 
     def query(self, prompt, **kwargs):
-        endpoint = f"{self.host}/api/complete"
+        endpoint = f"http://localhost:11434/api/chat"
         payload = {
             "model": self.model,
             "prompt": prompt,
