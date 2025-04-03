@@ -20,6 +20,65 @@ You can start editing the page by modifying `app/page.tsx`. The page auto-update
 
 This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
 
+## Real-Time Communication
+
+This project uses WebSockets for real-time communication with the backend server. Here's how it's set up:
+
+### Configuration
+
+Copy the `.env.example` file to `.env.local` and update the WebSocket URL if needed:
+
+```bash
+cp .env.example .env.local
+```
+
+The default configuration uses:
+- `ws://localhost:8000/ws` for WebSocket communication
+
+### WebSocket Usage
+
+The application uses a custom WebSocket service located in `src/lib/websocket.ts` that provides:
+
+- Automatic reconnection handling
+- Type-safe event handling
+- Singleton service pattern for app-wide WebSocket access
+
+To use WebSockets in components, import the `useWebSocket` hook:
+
+```tsx
+import useWebSocket from "@/lib/hooks/useWebSocket";
+
+function MyComponent() {
+  const { isConnected, lastMessage, send, error } = useWebSocket({
+    onMessage: (data) => console.log('Received:', data),
+    onConnect: () => console.log('Connected'),
+  });
+
+  return (
+    <button 
+      onClick={() => send({ type: 'hello', message: 'Hello Server!' })}
+      disabled={!isConnected}
+    >
+      Send Message
+    </button>
+  );
+}
+```
+
+### Message Protocol
+
+Messages are sent in JSON format with this structure:
+
+```json
+{
+  "type": "message_type",
+  "data": { ... },
+  "timestamp": 1678912345
+}
+```
+
+Available message types are defined in `src/lib/config.ts`.
+
 ## Learn More
 
 To learn more about Next.js, take a look at the following resources:

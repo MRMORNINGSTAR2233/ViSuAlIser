@@ -1,18 +1,22 @@
 "use client";
 
-import { useState } from "react";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { useState, useEffect } from "react";
+import { Card, CardContent, CardHeader, CardTitle, CardFooter } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { toast } from "sonner";
-import { Toaster } from "@/components/ui/sonner";
+import { toast, Toaster } from "sonner";
+import { Toaster as SonnerToaster } from "@/components/ui/sonner";
 import { 
   UploadCloud, FileText, ZoomIn, ZoomOut, Network, 
   BarChart3, GitBranch, RefreshCw, Share2, Download,
-  PanelLeft, Sliders
+  PanelLeft, Sliders, Loader2
 } from "lucide-react";
+import RealTimeVisualization from "@/components/visualization/RealTimeVisualization";
+import useWebSocket from "@/lib/hooks/useWebSocket";
+import { WsMessageType, MessageType } from "@/lib/config";
+import { ErrorMessageDisplay } from "@/components/ui/error-message";
 
 export default function VisualizationPage() {
   const [files, setFiles] = useState<File[]>([]);
@@ -22,6 +26,48 @@ export default function VisualizationPage() {
   const [visualizationGenerated, setVisualizationGenerated] = useState(false);
   const [activeTab, setActiveTab] = useState("graph");
   const [showControls, setShowControls] = useState(true);
+  const [queryId, setQueryId] = useState<string>("");
+  const [inputQuery, setInputQuery] = useState("");
+  const [webSocket, setWebSocket] = useState<WebSocket | null>(null);
+  const [isConnected, setIsConnected] = useState(false);
+  const [isLoading, setIsLoading] = useState(false);
+  const [errorMessage, setErrorMessage] = useState("");
+  const [clarificationRequest, setClarificationRequest] = useState({ visible: false, message: "" });
+
+  // Set up WebSocket connection for submitting queries
+  const { send, isConnected: wsIsConnected } = useWebSocket({
+    autoConnect: true,
+    onMessage: (message) => {
+      const data = message.data;
+      
+      try {
+        const parsedData = JSON.parse(data);
+        console.log("Received WS message:", parsedData);
+        
+        // Handle different message types
+        if (parsedData.type === WsMessageType.QUERY_RESULT) {
+          setIsProcessing(false);
+          setQueryId(parsedData.id || "");
+          setVisualizationGenerated(true);
+          toast.success("Query processed successfully!");
+        } else if (parsedData.type === WsMessageType.ERROR) {
+          setIsProcessing(false);
+          setErrorMessage(parsedData.message || "An error occurred");
+          toast.error("Error processing query");
+        } else if (parsedData.type === WsMessageType.CLARIFICATION_NEEDED) {
+          setIsProcessing(false);
+          setClarificationRequest({
+            visible: true,
+            message: parsedData.message || "We need more information about your query"
+          });
+        } else if (parsedData.type === MessageType.VISUALIZATION_UPDATE) {
+          // ... existing visualization update code ...
+        }
+      } catch (error) {
+        console.error("Error parsing WebSocket message:", error);
+      }
+    }
+  });
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files) {
@@ -71,21 +117,67 @@ export default function VisualizationPage() {
       return;
     }
 
+    if (!wsIsConnected) {
+      toast.error("Not connected to the server. Please try again.");
+      return;
+    }
+
     setIsProcessing(true);
-    
-    // Simulate processing
-    setTimeout(() => {
-      setIsProcessing(false);
-      setVisualizationGenerated(true);
-      toast.success("Visualization generated successfully!");
-    }, 2000);
+
+    // Create form data to send files alongside the query
+    const formData = new FormData();
+    files.forEach(file => {
+      formData.append('files', file);
+    });
+    formData.append('query', query);
+
+    // Send query via WebSocket
+    send({
+      type: 'query',
+      query: query,
+      fileNames: files.map(file => file.name),
+    });
+
+    // Or use a timeout for simulated demo
+    if (process.env.NODE_ENV === 'development') {
+      // Simulate processing just for demo in development
+      setTimeout(() => {
+        // Generate a random queryId if the WebSocket doesn't respond
+        const generatedQueryId = `query-${Math.random().toString(36).substring(2, 9)}`;
+        setQueryId(generatedQueryId);
+        setIsProcessing(false);
+        setVisualizationGenerated(true);
+        toast.success("Visualization generated successfully!");
+      }, 2000);
+    }
   };
 
   const resetVisualization = () => {
+    // If we have a queryId, unsubscribe from updates
+    if (queryId && wsIsConnected) {
+      send({
+        type: 'unsubscribe',
+        queryId: queryId
+      });
+    }
+
     setVisualizationGenerated(false);
     setFiles([]);
     setQuery("");
     setActiveTab("graph");
+    setQueryId("");
+  };
+
+  const handleClarificationResponse = (response: string) => {
+    if (wsIsConnected) {
+      send({
+        type: 'clarification_response',
+        query: query,
+        response: response
+      });
+      setClarificationRequest({ visible: false, message: "" });
+      setIsProcessing(true);
+    }
   };
 
   return (
@@ -247,13 +339,15 @@ export default function VisualizationPage() {
                     className="w-full rounded-full" 
                     size="lg" 
                     onClick={handleSubmit}
-                    disabled={isProcessing}
+                    disabled={isProcessing || !wsIsConnected}
                   >
                     {isProcessing ? (
                       <>
-                        <RefreshCw className="mr-2 h-4 w-4 animate-spin" />
+                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                         Processing...
                       </>
+                    ) : !wsIsConnected ? (
+                      "Connecting to server..."
                     ) : (
                       "Generate Visualization"
                     )}
@@ -376,62 +470,43 @@ export default function VisualizationPage() {
                       <BarChart3 className="h-4 w-4 mr-2" /> Matrix
                     </TabsTrigger>
                   </TabsList>
+                  
+                  {/* Graph Visualization Tab */}
                   <TabsContent value="graph" className="pt-4">
-                    <div className="w-full h-[600px] flex items-center justify-center border rounded-xl bg-muted/20 overflow-hidden">
-                      {/* This would be replaced with actual visualization */}
-                      <div className="text-center p-12">
-                        <div className="mx-auto rounded-full flex flex-col items-center justify-center gap-4">
-                          <div className="relative w-64 h-64">
-                            <div className="absolute inset-0 rounded-full border-4 border-dashed animate-[spin_20s_linear_infinite] flex items-center justify-center">
-                              <div className="w-1/2 h-1/2 rounded-full border-4 border-dashed border-primary animate-[spin_15s_linear_infinite_reverse] flex items-center justify-center">
-                                <div className="w-1/2 h-1/2 rounded-full border-4 border-primary animate-[spin_10s_linear_infinite]"></div>
-                              </div>
-                            </div>
-                          </div>
-                          <div className="text-muted-foreground mt-6">
-                            <h3 className="text-xl font-medium mb-1">Network Graph Visualization</h3>
-                            <p className="text-sm">Based on your data and query</p>
-                          </div>
-                        </div>
-                      </div>
+                    <div className="w-full h-[600px] border rounded-xl bg-muted/20 overflow-hidden">
+                      <RealTimeVisualization 
+                        visualizationType="graph" 
+                        queryId={queryId}
+                        onDataUpdate={(data) => {
+                          console.log("Received graph data update:", data);
+                        }}
+                      />
                     </div>
                   </TabsContent>
+                  
+                  {/* Tree Visualization Tab */}
                   <TabsContent value="tree" className="pt-4">
-                    <div className="w-full h-[600px] flex items-center justify-center border rounded-xl bg-muted/20 overflow-hidden">
-                      <div className="text-center p-12">
-                        <div className="mx-auto rounded-full flex flex-col items-center justify-center gap-4">
-                          <div className="relative w-64 h-64">
-                            <div className="absolute inset-0 rounded-full border-4 border-dashed animate-[spin_20s_linear_infinite] flex items-center justify-center">
-                              <div className="w-1/2 h-1/2 rounded-full border-4 border-dashed border-primary animate-[spin_15s_linear_infinite_reverse] flex items-center justify-center">
-                                <div className="w-1/2 h-1/2 rounded-full border-4 border-primary animate-[spin_10s_linear_infinite]"></div>
-                              </div>
-                            </div>
-                          </div>
-                          <div className="text-muted-foreground mt-6">
-                            <h3 className="text-xl font-medium mb-1">Tree Visualization</h3>
-                            <p className="text-sm">Hierarchical representation of your data</p>
-                          </div>
-                        </div>
-                      </div>
+                    <div className="w-full h-[600px] border rounded-xl bg-muted/20 overflow-hidden">
+                      <RealTimeVisualization 
+                        visualizationType="tree" 
+                        queryId={queryId}
+                        onDataUpdate={(data) => {
+                          console.log("Received tree data update:", data);
+                        }}
+                      />
                     </div>
                   </TabsContent>
+                  
+                  {/* Matrix Visualization Tab */}
                   <TabsContent value="matrix" className="pt-4">
-                    <div className="w-full h-[600px] flex items-center justify-center border rounded-xl bg-muted/20 overflow-hidden">
-                      <div className="text-center p-12">
-                        <div className="mx-auto rounded-full flex flex-col items-center justify-center gap-4">
-                          <div className="relative w-64 h-64">
-                            <div className="absolute inset-0 rounded-full border-4 border-dashed animate-[spin_20s_linear_infinite] flex items-center justify-center">
-                              <div className="w-1/2 h-1/2 rounded-full border-4 border-dashed border-primary animate-[spin_15s_linear_infinite_reverse] flex items-center justify-center">
-                                <div className="w-1/2 h-1/2 rounded-full border-4 border-primary animate-[spin_10s_linear_infinite]"></div>
-                              </div>
-                            </div>
-                          </div>
-                          <div className="text-muted-foreground mt-6">
-                            <h3 className="text-xl font-medium mb-1">Matrix Visualization</h3>
-                            <p className="text-sm">Tabular representation of relationships</p>
-                          </div>
-                        </div>
-                      </div>
+                    <div className="w-full h-[600px] border rounded-xl bg-muted/20 overflow-hidden">
+                      <RealTimeVisualization 
+                        visualizationType="matrix" 
+                        queryId={queryId}
+                        onDataUpdate={(data) => {
+                          console.log("Received matrix data update:", data);
+                        }}
+                      />
                     </div>
                   </TabsContent>
                 </Tabs>
@@ -441,6 +516,20 @@ export default function VisualizationPage() {
         </div>
       )}
       <Toaster />
+
+      <ErrorMessageDisplay 
+        isVisible={!!errorMessage}
+        message={errorMessage}
+        onClose={() => setErrorMessage("")}
+      />
+
+      <ErrorMessageDisplay 
+        isVisible={clarificationRequest.visible}
+        message={clarificationRequest.message}
+        isQueryClarification={true}
+        onClose={() => setClarificationRequest({ visible: false, message: "" })}
+        onSubmitResponse={handleClarificationResponse}
+      />
     </div>
   );
 } 
